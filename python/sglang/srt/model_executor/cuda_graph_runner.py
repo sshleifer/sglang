@@ -526,6 +526,19 @@ def set_global_graph_memory_pool(val):
     global_graph_memory_pool = val
 
 
+def _default_make_graph_key(bs, stream_idx=None, variant_label=None):
+    """Build a graph dict key from batch size, stream index, and lora variant.
+
+    Standalone function so it can be used by CudaGraphRunner.capture() even when
+    called on subclasses (e.g. EAGLEDraftCudaGraphRunner) that don't inherit from
+    CudaGraphRunner and thus lack the method.
+    """
+    key = bs if stream_idx is None else f"{stream_idx}_{bs}"
+    if variant_label is not None:
+        key = f"{variant_label}_{key}"
+    return key
+
+
 class CudaGraphRunner:
     """A CudaGraphRunner runs the forward pass of a model with cuda graph and torch.compile."""
 
@@ -702,10 +715,7 @@ class CudaGraphRunner:
 
     def _make_graph_key(self, bs, stream_idx=None, variant_label=None):
         """Build a graph dict key from batch size, stream index, and lora variant."""
-        key = bs if stream_idx is None else f"{stream_idx}_{bs}"
-        if variant_label is not None:
-            key = f"{variant_label}_{key}"
-        return key
+        return _default_make_graph_key(bs, stream_idx, variant_label)
 
     def _resolve_lora_variant(self, forward_batch: ForwardBatch):
         """Return the variant label for the given batch, or None if dual backends are off."""
@@ -859,7 +869,7 @@ class CudaGraphRunner:
                             graph,
                             output_buffers,
                         ) = self.capture_one_batch_size(bs, forward, stream_idx)
-                        key = self._make_graph_key(bs, stream_idx, variant_label)
+                        key = _default_make_graph_key(bs, stream_idx, variant_label)
                         self.graphs[key] = graph
                         self.output_buffers[key] = output_buffers
 
