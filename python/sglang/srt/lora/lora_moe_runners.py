@@ -445,6 +445,7 @@ def _add_lora_gate_up_delta(
 
     if get_is_capture_mode():
         from sglang.srt.model_executor.cuda_graph_runner import get_capture_lora_variant
+
         # Record LoRA kernels for lora graph; skip for nolora graph.
         has_active_lora = get_capture_lora_variant() != "nolora"
     else:
@@ -548,6 +549,7 @@ def _add_lora_down_delta(
 
     if get_is_capture_mode():
         from sglang.srt.model_executor.cuda_graph_runner import get_capture_lora_variant
+
         if get_capture_lora_variant() == "nolora":
             return
 

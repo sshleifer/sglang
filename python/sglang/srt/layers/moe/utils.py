@@ -176,9 +176,14 @@ def initialize_moe_config(server_args: ServerArgs):
     MOE_RUNNER_BACKEND = MoeRunnerBackend(server_args.moe_runner_backend)
     # Dual CUDA graphs only validated for triton MoE backends.
     _triton_ok = MOE_RUNNER_BACKEND in (
-        MoeRunnerBackend.TRITON, MoeRunnerBackend.TRITON_KERNELS,
+        MoeRunnerBackend.TRITON,
+        MoeRunnerBackend.TRITON_KERNELS,
     )
-    if bool(server_args.record_nolora_graph) and bool(server_args.enable_lora) and not _triton_ok:
+    if (
+        bool(server_args.record_nolora_graph)
+        and bool(server_args.enable_lora)
+        and not _triton_ok
+    ):
         logger.warning(
             f"record_nolora_graph only validated for triton MoE backend, "
             f"but moe_runner_backend={server_args.moe_runner_backend}. Disabling."
