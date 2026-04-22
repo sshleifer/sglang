@@ -340,9 +340,19 @@ class SchedulerRuntimeCheckerMixin:
             self.req_to_token_pool.mamba_pool.size,
         )
         if leak:
-            # Page-level leak diagnosis for mamba
+            # Page-level leak diagnosis for mamba. Skip the full-page part
+            # when the underlying allocator does not expose ``free_pages``
+            # (e.g. paged allocators used by some hybrid-SSM models) --
+            # without this guard the diagnosis itself crashes the scheduler
+            # with ``AttributeError: 'NoneType' object has no attribute
+            # 'tolist'`` while trying to report the leak.
+            free_pages_attr = getattr(
+                self.token_to_kv_pool_allocator, "free_pages", None
+            )
+            if free_pages_attr is None:
+                return leak, msg
             free_full_pages = set(
-                self.token_to_kv_pool_allocator.free_pages.tolist()
+                free_pages_attr.tolist()
                 + self.token_to_kv_pool_allocator.release_pages.tolist()
             )
             cached_full_pages = set(self.tree_cache.all_values_flatten().tolist())
