@@ -408,13 +408,6 @@ class StreamingSession(BasePrefixCache):
                 self.token_to_kv_pool_allocator.free(kv_indices)
             self.req_to_token_pool.free_slots.append(slot.req_pool_idx)
 
-        # release_session must also return any mamba pool state the slot
-        # is holding. HybridReqToTokenPool.alloc batch-allocates one
-        # mamba_pool_idx plus, when the extra_buffer feature is enabled,
-        # ping-pong track buffer entries per fresh req; SessionSlot takes
-        # ownership of these in save_from_req, so without this they leak
-        # permanently -- each session close drops `1 + ping_pong_size`
-        # slots until the pool is starved.
         self._free_slot_mamba(slot)
 
     def session_held_tokens(self, active_pool_idxs: Optional[set] = None) -> int:
