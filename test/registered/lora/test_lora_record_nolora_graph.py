@@ -44,7 +44,10 @@ from sglang.srt.model_executor.cuda_graph_runner import (
     _set_capture_lora_variant,
     get_capture_lora_variant,
 )
+from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.test_utils import CustomTestCase
+
+register_cuda_ci(est_time=10, suite="stage-b-test-1-gpu-small")
 
 KEY_FNS = (
     ("FlashInfer", FlashInferAttnBackend._cuda_graph_metadata_key),
