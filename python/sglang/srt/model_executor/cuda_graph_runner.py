@@ -730,12 +730,21 @@ class CudaGraphRunner:
         return _default_make_graph_key(bs, stream_idx, variant_label)
 
     def _resolve_lora_variant(self, forward_batch: ForwardBatch):
-        """Return the variant label for the given batch, or None if dual backends are off."""
-        if not getattr(self, "record_nolora_graph", False):
+        """Return the LoRA graph variant for this batch.
+
+        Mixed LoRA/no-LoRA batches replay the LoRA graph. Attention metadata is
+        keyed by this variant so it does not alias the no-LoRA graph metadata.
+        """
+        if not self.record_nolora_graph:
             return None
-        if forward_batch.lora_ids is not None and any(
-            uid is not None for uid in forward_batch.lora_ids
-        ):
+        if forward_batch.lora_ids is None:
+            return "nolora"
+
+        has_lora = any(uid is not None for uid in forward_batch.lora_ids)
+        has_nolora = any(uid is None for uid in forward_batch.lora_ids)
+        if has_lora and has_nolora:
+            return "lora"
+        if has_lora:
             return "lora"
         return "nolora"
 
@@ -855,7 +864,7 @@ class CudaGraphRunner:
             # once with LoRA hooks and once without.
             lora_variants = (
                 [("lora", True), ("nolora", False)]
-                if getattr(self, "record_nolora_graph", False)
+                if self.record_nolora_graph
                 else [(None, None)]
             )
             for i, bs in enumerate(capture_range):
@@ -1267,16 +1276,21 @@ class CudaGraphRunner:
             attn_backend = self.model_runner.decode_attn_backend_group[stream_idx]
         else:
             attn_backend = self.attn_backend
-        attn_backend.init_forward_metadata_replay_cuda_graph(
-            bs,
-            buffers.req_pool_indices[:bs],
-            buffers.seq_lens[:bs],
-            forward_batch.seq_lens_sum + (bs - raw_bs) * self.seq_len_fill_value,
-            buffers.encoder_lens[:bs] if self.is_encoder_decoder else None,
-            self.capture_forward_mode,
-            forward_batch.spec_info,
-            seq_lens_cpu=buffers.seq_lens_cpu[:bs],
-        )
+        variant_label = self._resolve_lora_variant(forward_batch)
+        _set_capture_lora_variant(variant_label)
+        try:
+            attn_backend.init_forward_metadata_replay_cuda_graph(
+                bs,
+                buffers.req_pool_indices[:bs],
+                buffers.seq_lens[:bs],
+                forward_batch.seq_lens_sum + (bs - raw_bs) * self.seq_len_fill_value,
+                buffers.encoder_lens[:bs] if self.is_encoder_decoder else None,
+                self.capture_forward_mode,
+                forward_batch.spec_info,
+                seq_lens_cpu=buffers.seq_lens_cpu[:bs],
+            )
+        finally:
+            _set_capture_lora_variant(None)
 
         # Store fields
         self.raw_bs = raw_bs

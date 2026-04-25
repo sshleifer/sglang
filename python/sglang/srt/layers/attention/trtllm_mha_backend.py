@@ -149,6 +149,15 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
         #   KV fp8: q_type = fp8, out_type=model_runner.dtype
         self.is_xqa_impl = is_sm90_supported() or is_sm120_supported()
 
+    @staticmethod
+    def _cuda_graph_metadata_key(bs: int):
+        from sglang.srt.model_executor.cuda_graph_runner import (
+            get_capture_lora_variant,
+        )
+
+        variant = get_capture_lora_variant()
+        return (bs, variant) if variant is not None else bs
+
     def _maybe_translate_swa(
         self, token_indices: torch.Tensor
     ) -> Optional[torch.Tensor]:
@@ -316,6 +325,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
         """Initialize metadata for CUDA graph capture."""
         metadata = TRTLLMMHAMetadata()
         device = seq_lens.device
+        metadata_key = self._cuda_graph_metadata_key(bs)
 
         if forward_mode.is_decode_or_idle():
             if spec_info is not None:
@@ -345,7 +355,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                     "swa_page_table_draft_decode",
                     bs,
                 )
-                self.decode_cuda_graph_metadata[bs] = metadata
+                self.decode_cuda_graph_metadata[metadata_key] = metadata
             else:
                 # Normal Decode
                 # Get sequence information
@@ -371,7 +381,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                     "swa_page_table",
                     bs,
                 )
-                self.decode_cuda_graph_metadata[bs] = metadata
+                self.decode_cuda_graph_metadata[metadata_key] = metadata
         elif forward_mode.is_target_verify():
             # Target Verify
             # Here we only support topk = 1 for now.
@@ -407,7 +417,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                 bs,
             )
 
-            self.target_verify_metadata[bs] = metadata
+            self.target_verify_metadata[metadata_key] = metadata
         elif forward_mode.is_draft_extend():
             metadata.cache_seqlens_int32 = self.draft_extend_metadata["cache_seqlens"][
                 :bs
@@ -437,7 +447,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                 bs,
             )
 
-            self.draft_extend_metadata[bs] = metadata
+            self.draft_extend_metadata[metadata_key] = metadata
         self.forward_metadata = metadata
 
     def init_forward_metadata_replay_cuda_graph(
@@ -456,11 +466,12 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
         seq_lens_cpu = seq_lens_cpu[:bs]
         req_pool_indices = req_pool_indices[:bs]
         metadata = None
+        metadata_key = self._cuda_graph_metadata_key(bs)
         if forward_mode.is_decode_or_idle():
             if spec_info is not None:
                 # Draft Decode
                 # Here we only support topk = 1 for now.
-                metadata = self.decode_cuda_graph_metadata[bs]
+                metadata = self.decode_cuda_graph_metadata[metadata_key]
                 max_len = seq_lens_cpu.max().item()
                 metadata.max_seq_len_k = max_len + self.speculative_step_id + 1
 
@@ -473,7 +484,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                 )
             else:
                 # Normal Decode
-                metadata = self.decode_cuda_graph_metadata[bs]
+                metadata = self.decode_cuda_graph_metadata[metadata_key]
                 max_len = seq_lens_cpu.max().item()
                 max_seq_pages = (max_len + self.page_size - 1) // self.page_size
                 metadata.max_seq_len_k = max_len
@@ -493,7 +504,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
             self._copy_swa_page_table(metadata, page_indices, max_seq_pages)
         elif forward_mode.is_target_verify():
             # Here we only support topk = 1 for now.
-            metadata = self.target_verify_metadata[bs]
+            metadata = self.target_verify_metadata[metadata_key]
             metadata.cache_seqlens_int32.copy_(
                 (seq_lens + self.speculative_num_draft_tokens)
             )
@@ -516,7 +527,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
             self._copy_swa_page_table(metadata, page_indices, max_seq_pages)
             metadata.max_seq_len_q = self.speculative_num_draft_tokens
         elif forward_mode.is_draft_extend():
-            metadata = self.draft_extend_metadata[bs]
+            metadata = self.draft_extend_metadata[metadata_key]
             metadata.cache_seqlens_int32.copy_(seq_lens)
 
             metadata.max_seq_len_k = seq_lens_cpu.max().item()

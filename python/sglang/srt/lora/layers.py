@@ -884,12 +884,20 @@ class FusedMoEWithLoRA(BaseLayerWithLoRA):
             adapter_enabled.zero_()
             idx_buf = cg_buffers["weight_indices_long"]
             idx_buf[: batch_info.bs] = batch_info.weight_indices[: batch_info.bs]
-            adapter_enabled.index_fill_(0, idx_buf[: batch_info.bs], 1)
+            active_weight_indices = idx_buf[: batch_info.bs]
+            active_ranks = batch_info.lora_ranks[active_weight_indices]
+            adapter_enabled.scatter_(
+                0, active_weight_indices, (active_ranks > 0).to(torch.int32)
+            )
         else:
             adapter_enabled = torch.zeros(
                 len(lora_ranks), dtype=torch.int32, device=lora_ranks.device
             )
-            adapter_enabled.index_fill_(0, batch_info.weight_indices.long(), 1)
+            active_weight_indices = batch_info.weight_indices.long()
+            active_ranks = batch_info.lora_ranks[active_weight_indices]
+            adapter_enabled.scatter_(
+                0, active_weight_indices, (active_ranks > 0).to(torch.int32)
+            )
 
         return LoRAInfo(
             gate_up_lora_a_weights=self.gate_up_lora_a_weights,

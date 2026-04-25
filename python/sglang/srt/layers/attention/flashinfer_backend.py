@@ -298,6 +298,15 @@ class FlashInferAttnBackend(AttentionBackend):
         self.prefill_cuda_graph_metadata = {}  # For verify
         self.draft_extend_cuda_graph_metadata = {}  # For draft extend
 
+    @staticmethod
+    def _cuda_graph_metadata_key(bs: int):
+        from sglang.srt.model_executor.cuda_graph_runner import (
+            get_capture_lora_variant,
+        )
+
+        variant = get_capture_lora_variant()
+        return (bs, variant) if variant is not None else bs
+
     def _process_multi_item_scoring(
         self, forward_batch: ForwardBatch
     ) -> MultiItemScoringParams:
@@ -593,7 +602,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 fixed_split_size=None,
                 disable_split_kv=self.disable_cuda_graph_kv_split,
             )
-            self.decode_cuda_graph_metadata[bs] = decode_wrappers
+            self.decode_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                decode_wrappers
+            )
             self.forward_metadata = DecodeMetadata(decode_wrappers)
             for i in range(self.num_wrappers):
                 decode_wrappers[i].begin_forward = partial(
@@ -643,7 +654,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens,
                 spec_info=spec_info,
             )
-            self.prefill_cuda_graph_metadata[bs] = prefill_wrappers
+            self.prefill_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                prefill_wrappers
+            )
             self.forward_metadata = PrefillMetadata(prefill_wrappers, False, False)
         elif forward_mode.is_draft_extend():
             prefill_wrappers = []
@@ -673,7 +686,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens,
                 spec_info=spec_info,
             )
-            self.prefill_cuda_graph_metadata[bs] = prefill_wrappers
+            self.prefill_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                prefill_wrappers
+            )
             self.forward_metadata = PrefillMetadata(prefill_wrappers, False, False)
         elif forward_mode.is_dllm_extend():
             prefill_wrappers = []
@@ -702,7 +717,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 encoder_lens=encoder_lens,
                 spec_info=None,
             )
-            self.prefill_cuda_graph_metadata[bs] = prefill_wrappers
+            self.prefill_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                prefill_wrappers
+            )
             self.forward_metadata = PrefillMetadata(prefill_wrappers, True, False)
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
@@ -724,7 +741,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 seq_lens[:bs],
                 seq_lens_cpu[:bs] if seq_lens_cpu is not None else None,
                 seq_lens_sum,
-                decode_wrappers=self.decode_cuda_graph_metadata[bs],
+                decode_wrappers=self.decode_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
                 fixed_split_size=None,
@@ -737,7 +756,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 seq_lens_cpu[:bs] if seq_lens_cpu is not None else None,
                 seq_lens_sum,
                 prefix_lens=None,
-                prefill_wrappers=self.prefill_cuda_graph_metadata[bs],
+                prefill_wrappers=self.prefill_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 use_ragged=False,
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
@@ -749,7 +770,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 seq_lens_cpu[:bs] if seq_lens_cpu is not None else None,
                 seq_lens_sum,
                 prefix_lens=None,
-                prefill_wrappers=self.prefill_cuda_graph_metadata[bs],
+                prefill_wrappers=self.prefill_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 use_ragged=False,
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
@@ -761,7 +784,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 seq_lens_cpu[:bs] if seq_lens_cpu is not None else None,
                 seq_lens_sum,
                 prefix_lens=seq_lens - self.dllm_config.block_size,
-                prefill_wrappers=self.prefill_cuda_graph_metadata[bs],
+                prefill_wrappers=self.prefill_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 use_ragged=True,
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=None,
