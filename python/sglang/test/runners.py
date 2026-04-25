@@ -649,7 +649,11 @@ class SRTRunner:
             ),
             lora_eviction_policy=lora_eviction_policy,
             enable_deterministic_inference=enable_deterministic_inference,
-            **({"record_nolora_graph": record_nolora_graph} if record_nolora_graph is not None else {}),
+            **(
+                {"record_nolora_graph": record_nolora_graph}
+                if record_nolora_graph is not None
+                else {}
+            ),
             **spec_kwargs,
         )
 
