@@ -740,11 +740,9 @@ class CudaGraphRunner:
         if forward_batch.lora_ids is None:
             return "nolora"
 
-        has_lora = any(uid is not None for uid in forward_batch.lora_ids)
-        has_nolora = any(uid is None for uid in forward_batch.lora_ids)
-        if has_lora and has_nolora:
-            return "lora"
-        if has_lora:
+        # Pure-LoRA and mixed (LoRA + no-LoRA) batches both replay the LoRA
+        # graph; only homogeneous no-LoRA batches use the no-LoRA graph.
+        if any(uid is not None for uid in forward_batch.lora_ids):
             return "lora"
         return "nolora"
 

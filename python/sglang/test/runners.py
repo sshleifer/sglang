@@ -554,7 +554,7 @@ class SRTRunner:
         port: int = DEFAULT_PORT_FOR_SRT_TEST_RUNNER,
         lora_paths: Optional[Union[List[str], List[dict[str, str]]]] = None,
         max_loras_per_batch: int = 4,
-        attention_backend: Optional[str] = None,
+        attention_backend: Optional[str] = "torch_native",
         prefill_attention_backend: Optional[str] = None,
         decode_attention_backend: Optional[str] = None,
         lora_backend: str = "csgmv",
@@ -587,6 +587,7 @@ class SRTRunner:
         json_model_override_args: Optional[dict[str, Any]] = None,
         lora_eviction_policy: str = "lru",
         enable_deterministic_inference: bool = False,
+        record_nolora_graph: Optional[bool] = None,
     ):
         self.model_type = model_type
         self.is_generation = model_type == "generation"
@@ -648,6 +649,7 @@ class SRTRunner:
             ),
             lora_eviction_policy=lora_eviction_policy,
             enable_deterministic_inference=enable_deterministic_inference,
+            **({"record_nolora_graph": record_nolora_graph} if record_nolora_graph is not None else {}),
             **spec_kwargs,
         )
 
