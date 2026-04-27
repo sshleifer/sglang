@@ -322,7 +322,13 @@ def _compute_token_lora_mapping(
         token_positions,
         right=True,
     )
-    return lora_info.req_to_lora.to(torch.int32)[req_indices]
+    token_lora_mapping = lora_info.req_to_lora.to(torch.int32)[req_indices]
+    token_lora_ranks = lora_info.lora_ranks[token_lora_mapping.long()]
+    return torch.where(
+        token_lora_ranks > 0,
+        token_lora_mapping,
+        torch.full_like(token_lora_mapping, -1),
+    )
 
 
 def _compute_lora_alignment(

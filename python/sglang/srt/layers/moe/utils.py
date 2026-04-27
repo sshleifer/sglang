@@ -174,24 +174,26 @@ def initialize_moe_config(server_args: ServerArgs):
 
     MOE_A2A_BACKEND = MoeA2ABackend(server_args.moe_a2a_backend)
     MOE_RUNNER_BACKEND = MoeRunnerBackend(server_args.moe_runner_backend)
-    # Dual CUDA graphs only validated for triton MoE backends.
-    _triton_ok = MOE_RUNNER_BACKEND in (
+    # Dual CUDA graphs are validated for backends whose LoRA path can capture a
+    # no-op/no-LoRA variant without changing the base MoE dispatch contract.
+    _dual_graph_ok = MOE_RUNNER_BACKEND in (
         MoeRunnerBackend.TRITON,
         MoeRunnerBackend.TRITON_KERNELS,
+        MoeRunnerBackend.MARLIN,
     )
     if (
         bool(server_args.record_nolora_graph)
         and bool(server_args.enable_lora)
-        and not _triton_ok
+        and not _dual_graph_ok
     ):
         logger.warning(
-            f"record_nolora_graph only validated for triton MoE backend, "
+            f"record_nolora_graph only validated for triton/marlin MoE backends, "
             f"but moe_runner_backend={server_args.moe_runner_backend}. Disabling."
         )
     RECORD_NOLORA_GRAPH = (
         bool(server_args.record_nolora_graph)
         and bool(server_args.enable_lora)
-        and _triton_ok
+        and _dual_graph_ok
     )
     SPECULATIVE_MOE_RUNNER_BACKEND = (
         MoeRunnerBackend(server_args.speculative_moe_runner_backend)

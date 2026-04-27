@@ -17,6 +17,7 @@ def _fused_virtual_topk_ids_kernel(
     virtual_topk_ids_ptr,
     token_lora_mask_ptr,
     num_experts_for_weight: tl.constexpr,
+    num_virtual_experts: tl.constexpr,
     M,
     top_k: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -28,10 +29,14 @@ def _fused_virtual_topk_ids_kernel(
         lora_id = token_lora_mapping[m]
         mask[m] = (lora_id >= 0)
         safe_lora = max(lora_id, 0)
-        if shared_outer:  (handled by num_experts_for_weight == 0 sentinel)
+        if shared_outer:
             virtual_topk_ids[m, k] = safe_lora * 1  (= safe_lora)
         else:
             virtual_topk_ids[m, k] = topk_ids[m, k] + safe_lora * num_experts_for_weight
+
+    For no-LoRA tokens, route to the extra sentinel bucket
+    (num_virtual_experts). The align helper maps that bucket to expert_id=-1,
+    so LoRA kernels skip those rows instead of running them through adapter 0.
     """
     pid = tl.program_id(0)
     offs = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -46,7 +51,11 @@ def _fused_virtual_topk_ids_kernel(
     safe_lora = tl.maximum(lora_id, 0)
 
     base = tl.load(topk_ids_ptr + offs, mask=valid, other=0)
-    result = base + safe_lora * num_experts_for_weight
+    result = tl.where(
+        mask_val,
+        base + safe_lora * num_experts_for_weight,
+        num_virtual_experts,
+    )
     tl.store(virtual_topk_ids_ptr + offs, result, mask=valid)
 
     # Write mask once per row (at first k position)
@@ -76,6 +85,7 @@ def _fused_virtual_topk_ids(
     else:
         num_experts_for_weight = num_experts
         input_topk = topk_ids
+    virtual_num_experts = num_experts_for_weight * max_loras
 
     virtual_topk_ids = torch.empty_like(topk_ids)
     token_lora_mask = torch.empty(M, dtype=torch.bool, device=device)
@@ -89,12 +99,12 @@ def _fused_virtual_topk_ids(
         virtual_topk_ids,
         token_lora_mask,
         num_experts_for_weight,
+        virtual_num_experts,
         M,
         top_k,
         BLOCK_SIZE,
     )
 
-    virtual_num_experts = num_experts_for_weight * max_loras
     return virtual_topk_ids, token_lora_mask, virtual_num_experts
 
 
@@ -140,6 +150,34 @@ def fused_sanitize_expert_ids(
     return output
 
 
+def _trim_num_tokens_post_padded_to_active_experts(
+    expert_ids: torch.Tensor,
+    num_tokens_post_padded: torch.Tensor,
+    block_size: int,
+) -> torch.Tensor:
+    """Exclude sentinel/tail blocks from the runtime LoRA GEMM extent.
+
+    No-LoRA tokens are routed to a sentinel bucket and then sanitized to
+    expert_id=-1. The fused MoE kernels can skip -1 blocks, but keeping those
+    blocks inside num_tokens_post_padded still makes CUDA graph replay execute
+    over no-op sentinel work. For Marlin mixed replay this can surface as an
+    illegal memory access, so bound the runtime extent to non-negative expert
+    blocks only.
+    """
+    block_indices = torch.arange(
+        expert_ids.numel(), device=expert_ids.device, dtype=torch.int32
+    )
+    active_num_blocks = torch.max(
+        torch.where(
+            expert_ids >= 0,
+            block_indices + 1,
+            torch.zeros_like(block_indices),
+        )
+    )
+    active_num_tokens = (active_num_blocks * block_size).reshape(1)
+    return torch.minimum(num_tokens_post_padded, active_num_tokens)
+
+
 @triton.jit
 def _moe_lora_shrink_splitk_kernel(
     # Pointers
@@ -181,6 +219,8 @@ def _moe_lora_shrink_splitk_kernel(
     num_pid_in_group = GROUP_SIZE_M * num_pid_n
     group_id = pid_mn // num_pid_in_group
     first_pid_m = group_id * GROUP_SIZE_M
+    if first_pid_m >= num_pid_m:
+        return
     group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
     pid_m = first_pid_m + ((pid_mn % num_pid_in_group) % group_size_m)
     pid_n = (pid_mn % num_pid_in_group) // group_size_m
@@ -303,8 +343,16 @@ def _align_block_size_torch(
     device = topk_ids.device
     flat_topk_ids = topk_ids.reshape(-1).to(torch.int64)
     num_valid_tokens = flat_topk_ids.numel()
+    # Reserve one extra bucket for no-LoRA tokens so their padded blocks can be
+    # sanitized to expert_id=-1 instead of being routed through adapter 0.
+    num_expert_buckets = num_experts + 1
     max_total_padded_tokens = (
-        (num_valid_tokens + num_experts * (block_size - 1) + block_size - 1)
+        (
+            num_valid_tokens
+            + num_expert_buckets * (block_size - 1)
+            + block_size
+            - 1
+        )
         // block_size
     ) * block_size
     max_num_blocks = max_total_padded_tokens // block_size
@@ -328,7 +376,7 @@ def _align_block_size_torch(
 
     sorted_order = torch.argsort(flat_topk_ids)
     sorted_expert_ids = flat_topk_ids[sorted_order]
-    expert_range = torch.arange(num_experts, device=device, dtype=torch.int64)
+    expert_range = torch.arange(num_expert_buckets, device=device, dtype=torch.int64)
     counts_offsets = torch.searchsorted(sorted_expert_ids, expert_range, right=False)
     counts_end = torch.searchsorted(sorted_expert_ids, expert_range, right=True)
     counts = counts_end - counts_offsets
@@ -493,7 +541,7 @@ def _merged_experts_fused_moe_lora_add_impl(
         # _align_block_size uses a worst-case padded allocation. Trim the routing buffers
         # to a tighter upper bound so we keep the real routed work but drop unused padding
         num_tokens = topk_ids.numel()
-        max_nonempty = min(num_tokens, virtual_num_experts)
+        max_nonempty = min(num_tokens, virtual_num_experts + 1)
         tight_padded = (
             triton.cdiv(num_tokens + max_nonempty * (block_size - 1), block_size)
             * block_size
@@ -501,6 +549,11 @@ def _merged_experts_fused_moe_lora_add_impl(
         sorted_token_ids = sorted_token_ids[:tight_padded]
         expert_ids = expert_ids[: tight_padded // block_size]
         expert_ids = fused_sanitize_expert_ids(expert_ids, virtual_num_experts)
+        num_tokens_post_padded = _trim_num_tokens_post_padded_to_active_experts(
+            expert_ids,
+            num_tokens_post_padded,
+            block_size,
+        )
         result = (
             sorted_token_ids,
             expert_ids,

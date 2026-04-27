@@ -22,6 +22,7 @@ from sglang.srt.layers.attention.flashinfer_backend import (
     create_flashinfer_kv_indices_triton,
 )
 from sglang.srt.layers.dp_attention import get_attention_tp_size
+from sglang.srt.model_executor.cuda_graph_runner import get_capture_lora_variant
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.spec_info import SpecInput
@@ -285,6 +286,11 @@ class FlashInferMLAAttnBackend(AttentionBackend):
         self.decode_cuda_graph_metadata = {}
         self.prefill_cuda_graph_metadata = {}  # For verify
 
+    @staticmethod
+    def _cuda_graph_metadata_key(bs: int):
+        variant = get_capture_lora_variant()
+        return (bs, variant) if variant is not None else bs
+
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         if forward_batch.forward_mode.is_decode_or_idle():
             self.indices_updater_decode.update(
@@ -400,7 +406,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 init_metadata_replay=False,
                 spec_info=spec_info,
             )
-            self.decode_cuda_graph_metadata[bs] = decode_wrapper
+            self.decode_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                decode_wrapper
+            )
             self.forward_metadata = DecodeMetadata(decode_wrapper)
             decode_wrapper.plan = partial(fast_mla_decode_plan, decode_wrapper)
         elif forward_mode.is_target_verify():
@@ -423,7 +431,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 use_ragged=False,
                 spec_info=spec_info,
             )
-            self.prefill_cuda_graph_metadata[bs] = verify_wrapper
+            self.prefill_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                verify_wrapper
+            )
             self.forward_metadata = PrefillMetadata(verify_wrapper, False)
         elif forward_mode.is_draft_extend():
             draft_extend_wrapper = BatchMLAPagedAttentionWrapper(
@@ -445,7 +455,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 use_ragged=False,
                 spec_info=spec_info,
             )
-            self.prefill_cuda_graph_metadata[bs] = draft_extend_wrapper
+            self.prefill_cuda_graph_metadata[self._cuda_graph_metadata_key(bs)] = (
+                draft_extend_wrapper
+            )
             self.forward_metadata = PrefillMetadata(draft_extend_wrapper, False)
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
@@ -479,7 +491,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 req_pool_indices[:bs],
                 seq_lens[:bs],
                 seq_lens_sum,
-                decode_wrapper=self.decode_cuda_graph_metadata[bs],
+                decode_wrapper=self.decode_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 init_metadata_replay=True,
                 spec_info=spec_info,
                 **self.fast_decode_kwargs,
@@ -490,7 +504,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 seq_lens[:bs],
                 seq_lens_sum,
                 prefix_lens=None,
-                prefill_wrapper_paged=self.prefill_cuda_graph_metadata[bs],
+                prefill_wrapper_paged=self.prefill_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 use_ragged=False,
                 spec_info=spec_info,
             )
@@ -500,7 +516,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 seq_lens[:bs],
                 seq_lens_sum,
                 prefix_lens=None,
-                prefill_wrapper_paged=self.prefill_cuda_graph_metadata[bs],
+                prefill_wrapper_paged=self.prefill_cuda_graph_metadata[
+                    self._cuda_graph_metadata_key(bs)
+                ],
                 use_ragged=False,
                 spec_info=spec_info,
             )
