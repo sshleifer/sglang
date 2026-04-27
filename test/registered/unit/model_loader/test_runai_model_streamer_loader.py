@@ -105,6 +105,53 @@ class TestRunaiModelStreamerLoader(CustomTestCase):
         marked.fill_(2)
         self.assertEqual(cloned.item(), 1)
 
+    def test_get_model_loader_uses_runai_for_prequantized_modelopt(self):
+        load_config = LoadConfig(
+            load_format=LoadFormat.RUNAI_STREAMER,
+            model_loader_extra_config={},
+        )
+        model_config = cast(
+            ModelConfig,
+            SimpleNamespace(
+                quantization="modelopt_fp4",
+                modelopt_quant=False,
+                _is_already_quantized=lambda: True,
+            ),
+        )
+
+        model_loader = loader_mod.get_model_loader(load_config, model_config)
+
+        self.assertIsInstance(model_loader, loader_mod.RunaiModelStreamerLoader)
+
+    def test_get_model_loader_rejects_dynamic_modelopt_with_runai_streamer(self):
+        load_config = LoadConfig(
+            load_format=LoadFormat.RUNAI_STREAMER,
+            model_loader_extra_config={},
+        )
+        model_configs = [
+            SimpleNamespace(
+                quantization="modelopt_fp4",
+                modelopt_quant=False,
+                _is_already_quantized=lambda: False,
+            ),
+            SimpleNamespace(
+                quantization=None,
+                modelopt_quant="nvfp4",
+                _is_already_quantized=lambda: False,
+            ),
+        ]
+
+        for model_config in model_configs:
+            with self.subTest(model_config=model_config):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "dynamic ModelOpt quantization is not supported with runai_streamer",
+                ):
+                    loader_mod.get_model_loader(
+                        load_config,
+                        cast(ModelConfig, model_config),
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
