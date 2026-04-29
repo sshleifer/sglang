@@ -347,12 +347,7 @@ def _align_block_size_torch(
     # sanitized to expert_id=-1 instead of being routed through adapter 0.
     num_expert_buckets = num_experts + 1
     max_total_padded_tokens = (
-        (
-            num_valid_tokens
-            + num_expert_buckets * (block_size - 1)
-            + block_size
-            - 1
-        )
+        (num_valid_tokens + num_expert_buckets * (block_size - 1) + block_size - 1)
         // block_size
     ) * block_size
     max_num_blocks = max_total_padded_tokens // block_size
