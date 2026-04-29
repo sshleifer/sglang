@@ -3162,11 +3162,16 @@ def get_model_loader(
     if load_config.load_format == LoadFormat.DUMMY:
         return DummyModelLoader(load_config)
 
-    # Pre-quantized + RunAI: skip ModelOptModelLoader and stream weights directly.
-    if load_config.load_format == LoadFormat.RUNAI_STREAMER and model_config and model_config._is_already_quantized():
-        return RunaiModelStreamerLoader(load_config)
+    # ModelOptModelLoader's local-copy quantize-and-export workflow doesn't apply
+    # to RUNAI_STREAMER, which streams weights directly from object storage.
+    # RUNAI_STREAMER loads always fall through to the unconditional branch at
+    # the bottom of this function. This also avoids calling _is_already_quantized()
+    # on RunAI streamer cache paths, where huggingface_hub raises HFValidationError.
+    model_optloader_allowed = (
+        model_config and load_config.load_format != LoadFormat.RUNAI_STREAMER
+    )
 
-    if model_config and (
+    if model_optloader_allowed and (
         (hasattr(model_config, "modelopt_quant") and model_config.modelopt_quant)
         or model_config.quantization
         in ["modelopt_fp8", "modelopt_fp4", "modelopt_mixed", "modelopt"]
@@ -3176,7 +3181,7 @@ def get_model_loader(
 
     # Use ModelOptModelLoader for unified quantization flags
     if (
-        model_config
+        model_optloader_allowed
         and hasattr(model_config, "quantization")
         and model_config.quantization
         in ["modelopt_fp8", "modelopt_fp4", "modelopt_mixed"]
