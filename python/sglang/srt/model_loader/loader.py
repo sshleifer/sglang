@@ -3154,34 +3154,6 @@ class RunaiModelStreamerLoader(BaseModelLoader):
         return model.eval()
 
 
-_MODELOPT_QUANTIZATIONS = {
-    "modelopt_fp8",
-    "modelopt_fp4",
-    "modelopt_mixed",
-    "modelopt",
-}
-
-
-def _is_modelopt_quantization(model_config: ModelConfig) -> bool:
-    return bool(
-        (hasattr(model_config, "modelopt_quant") and model_config.modelopt_quant)
-        or getattr(model_config, "quantization", None) in _MODELOPT_QUANTIZATIONS
-    )
-
-
-def _can_use_runai_for_modelopt(
-    load_config: LoadConfig, model_config: ModelConfig
-) -> bool:
-    return (
-        load_config.load_format == LoadFormat.RUNAI_STREAMER
-        and not (
-            hasattr(model_config, "modelopt_quant") and model_config.modelopt_quant
-        )
-        and getattr(model_config, "quantization", None) in _MODELOPT_QUANTIZATIONS
-        and model_config._is_already_quantized()
-    )
-
-
 def get_model_loader(
     load_config: LoadConfig, model_config: Optional[ModelConfig] = None
 ) -> BaseModelLoader:
@@ -3190,20 +3162,33 @@ def get_model_loader(
     if load_config.load_format == LoadFormat.DUMMY:
         return DummyModelLoader(load_config)
 
+    # Pre-quantized + RunAI: skip ModelOptModelLoader and stream weights directly.
+    if load_config.load_format == LoadFormat.RUNAI_STREAMER and model_config and model_config._is_already_quantized():
+        return RunaiModelStreamerLoader(load_config)
+
+    if model_config and (
+        (hasattr(model_config, "modelopt_quant") and model_config.modelopt_quant)
+        or model_config.quantization
+        in ["modelopt_fp8", "modelopt_fp4", "modelopt_mixed", "modelopt"]
+    ):
+        logger.info("Using ModelOptModelLoader due to ModelOpt quantization config.")
+        return ModelOptModelLoader(load_config)
+
+    # Use ModelOptModelLoader for unified quantization flags
     if (
         model_config
-        and load_config.load_format != LoadFormat.PRIVATE
-        and _is_modelopt_quantization(model_config)
+        and hasattr(model_config, "quantization")
+        and model_config.quantization
+        in ["modelopt_fp8", "modelopt_fp4", "modelopt_mixed"]
     ):
-        if _can_use_runai_for_modelopt(load_config, model_config):
-            logger.info("Using RunaiModelStreamerLoader for ModelOpt checkpoint.")
-            return RunaiModelStreamerLoader(load_config)
-        if load_config.load_format == LoadFormat.RUNAI_STREAMER:
-            raise ValueError(
-                "RunAI streamer only supports pre-quantized ModelOpt checkpoints; "
-                "dynamic ModelOpt quantization is not supported with runai_streamer."
+        if model_config._is_already_quantized():
+            logger.info(
+                f"Using ModelOptModelLoader for pre-quantized model: {model_config.quantization}"
             )
-        logger.info("Using ModelOptModelLoader due to ModelOpt quantization config.")
+        else:
+            logger.info(
+                f"Using ModelOptModelLoader for quantization: {model_config.quantization}"
+            )
         return ModelOptModelLoader(load_config)
 
     if isinstance(load_config.load_format, type):
