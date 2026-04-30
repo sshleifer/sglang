@@ -123,5 +123,6 @@ class TestRunaiModelStreamerLoader(CustomTestCase):
 
         self.assertIsInstance(model_loader, loader_mod.RunaiModelStreamerLoader)
 
+
 if __name__ == "__main__":
     unittest.main()

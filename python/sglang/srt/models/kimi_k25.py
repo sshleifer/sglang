@@ -773,7 +773,9 @@ class KimiK25ForConditionalGeneration(nn.Module):
                     if vname not in vision_params:
                         raise ValueError(f"Weight {vname} not found in params_dict")
                     param = vision_params[vname]
-                    weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                    weight_loader = getattr(
+                        param, "weight_loader", default_weight_loader
+                    )
                     weight_loader(param, loaded_weight)
                     continue
                 yield name.replace("language_model.", ""), loaded_weight
