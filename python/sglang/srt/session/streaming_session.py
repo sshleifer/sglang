@@ -456,9 +456,7 @@ class StreamingSession(BasePrefixCache):
 
         return sum(_owned(s) for s in self.slots.values())
 
-    def session_held_mamba_slots(
-        self, active_pool_idxs: Optional[set] = None
-    ) -> int:
+    def session_held_mamba_slots(self, active_pool_idxs: Optional[set] = None) -> int:
         """Total mamba_pool entries held by session slots (mamba_pool_idx +
         mamba_ping_pong_track_buffer). Excludes slots whose owning req is
         currently in the batch -- those slots are counted via the normal
