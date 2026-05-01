@@ -2438,6 +2438,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 str(server_args.moe_runner_backend),
                 str(self.tp_size),
                 str(self.pp_size),
+                str(self.dp_size),
+                str(self.moe_ep_size),
                 str(self.model_config.hf_config.__class__.__name__),
             ]
         )
