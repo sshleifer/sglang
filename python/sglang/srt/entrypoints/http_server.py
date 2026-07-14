@@ -2582,6 +2582,9 @@ def launch_server(
         run_detokenizer_process_func=run_detokenizer_process_func,
     )
 
+    if server_args.node_rank >= 1:
+        return
+
     _setup_and_run_http_server(
         server_args,
         tokenizer_manager,
